@@ -308,7 +308,7 @@
 
         let dbPromise = null;
         let map;
-        let markerLayer = L.layerGroup(); 
+        let markerLayer = L.featureGroup(); // CHANGED BACK TO FEATUREGROUP FOR GETBOUNDS()
         let polylineLayer = L.layerGroup();
         let allOutlets = [];
         let selectedRoutes = new Set(); 
@@ -352,7 +352,6 @@
                 request.onupgradeneeded = (event) => {
                     const db = event.target.result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
-                        // KeyPath auto-increment allows storing mostly anything, though we could use an ID
                         db.createObjectStore(STORE_NAME, { autoIncrement: true });
                     }
                 };
@@ -374,7 +373,6 @@
                 const transaction = db.transaction([STORE_NAME], "readwrite");
                 const store = transaction.objectStore(STORE_NAME);
 
-                // Use transaction oncomplete for large batch performance
                 transaction.oncomplete = () => {
                     resolve();
                 };
@@ -423,7 +421,6 @@
                     cardTitle.textContent = "Data Loaded";
                     cardDetail.textContent = `${allOutlets.length.toLocaleString()} records active.`;
                     
-                    // Populate Filters
                     const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
                     updateSelect(filterArea, areas, filterArea.value);
                     updateCascadingFilters(0);
@@ -476,11 +473,10 @@
             
             L.control.zoom({ position: 'topright' }).addTo(map);
 
-            // CHANGED: Defined multiple tile layers
             const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap',
                 maxZoom: 19
-            }).addTo(map); // Default
+            }).addTo(map);
 
             const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
                 attribution: 'Tiles &copy; Esri',
@@ -498,7 +494,6 @@
                 "Street View": esriStreet
             };
 
-            // Added layer control to bottom right
             L.control.layers(baseMaps, null, { position: 'bottomright' }).addTo(map);
 
             markerLayer.addTo(map); 
@@ -506,7 +501,7 @@
 
             document.querySelector('.leaflet-control-container').style.visibility = 'visible';
             
-            loadData(); // Load data after map init
+            loadData(); 
         };
 
         // --- 4. FILTER LOGIC ---
@@ -651,8 +646,6 @@
             
             kpiOutlets.textContent = dataToRender.length.toLocaleString();
 
-            // Render limit to prevent browser crash with 20k markers
-            // Only render first 2000 points until zoomed in, or render circles efficiently
             const RENDER_LIMIT = 2000;
             const renderSet = dataToRender.length > RENDER_LIMIT ? dataToRender.slice(0, RENDER_LIMIT) : dataToRender;
 
@@ -680,7 +673,6 @@
                 });
             });
 
-            // Route Lines - Calculation logic (only calculate if filtered to manageable number)
             if (dataToRender.length < 500) {
                 const routeGroups = {};
                 dataToRender.forEach(item => {
@@ -735,9 +727,14 @@
                 kpiDistance.innerHTML = `- <span class="text-xs font-semibold text-gray-400">km</span>`;
             }
 
-            if (renderSet.length > 0 && renderSet.length < 5000) {
+            // AUTO-ZOOM TO RESULTS
+            // Using FeatureGroup's built-in getBounds for reliable zooming
+            if (renderSet.length > 0) {
                 try {
-                    map.fitBounds(markerLayer.getBounds(), { padding: [20, 20], maxZoom: 14 });
+                    const bounds = markerLayer.getBounds();
+                    if (bounds.isValid()) {
+                        map.fitBounds(bounds, { padding: [20, 20], maxZoom: 14 });
+                    }
                 } catch (e) { }
             }
         };
@@ -749,7 +746,6 @@
                 invalidBox.classList.remove('hidden');
                 invalidHeader.textContent = `Data Anomalies (${dataList.length})`;
                 
-                // Only render first 100 errors to prevent lag
                 const displayList = dataList.slice(0, 100);
                 
                 displayList.forEach(data => {
@@ -769,7 +765,6 @@
             }
         };
 
-        // --- NEW: Restored clearFilters Function ---
         const clearFilters = () => {
             searchInput.value = "";
             filterArea.value = "";
@@ -805,7 +800,6 @@
             }
             
             const data = [];
-            // Parse CSV Loop
             for (let i = 1; i < lines.length; i++) {
                 const values = lines[i].trim().split(',');
                 if (values.length < rawHeaders.length) continue; 
@@ -856,11 +850,9 @@
                 
                 uploadStatus.textContent = `Saving ${parseResult.data.length.toLocaleString()} records...`;
                 
-                // Save to IndexedDB
                 try {
                     await saveDataToIDB(parseResult.data);
                     
-                    // Reload data from DB to memory to refresh UI
                     await loadData();
                     
                     uploadStatus.textContent = "Upload Complete!";
