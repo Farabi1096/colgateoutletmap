@@ -476,10 +476,30 @@
             
             L.control.zoom({ position: 'topright' }).addTo(map);
 
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '',
+            // CHANGED: Defined multiple tile layers
+            const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
                 maxZoom: 19
-            }).addTo(map); 
+            }).addTo(map); // Default
+
+            const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri',
+                maxZoom: 19
+            });
+
+            const esriStreet = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri',
+                maxZoom: 19
+            });
+
+            const baseMaps = {
+                "Standard": osmStandard,
+                "Satellite": esriSatellite,
+                "Street View": esriStreet
+            };
+
+            // Added layer control to bottom right
+            L.control.layers(baseMaps, null, { position: 'bottomright' }).addTo(map);
 
             markerLayer.addTo(map); 
             polylineLayer.addTo(map);
@@ -749,6 +769,7 @@
             }
         };
 
+        // --- NEW: Restored clearFilters Function ---
         const clearFilters = () => {
             searchInput.value = "";
             filterArea.value = "";
@@ -756,9 +777,7 @@
             filterTown.value = "";
             selectedRoutes.clear();
             routeBtnText.textContent = "All Routes";
-            // Uncheck checkboxes visually
             document.querySelectorAll('.route-checkbox').forEach(cb => cb.checked = false);
-            
             updateCascadingFilters(0); 
         };
 
