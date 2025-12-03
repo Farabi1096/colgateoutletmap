@@ -138,11 +138,11 @@
                 <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mt-1">Bangladesh Retail Mapping</p>
             </div>
              <div id="system-status" class="hidden md:flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-gray-200 shadow-sm">
-                <span id="status-dot" class="relative flex h-2 w-2">
-                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gray-400 opacity-75"></span>
-                  <span class="relative inline-flex rounded-full h-2 w-2 bg-gray-500"></span>
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                 </span>
-                <span id="status-text" class="text-xs font-bold text-gray-600">Initializing...</span>
+                <span class="text-xs font-bold text-gray-600">Local Mode</span>
             </div>
         </div>
 
@@ -185,6 +185,11 @@
                     <button id="clear-filters-btn" class="w-full text-[10px] text-gray-400 hover:text-colgate-red transition-colors font-bold uppercase tracking-wider py-1 border-t border-dashed border-gray-200 mt-2">
                         Reset All
                     </button>
+                    
+                    <!-- NEW: Reset Data Button -->
+                    <button id="clear-all-data-btn" class="w-full text-[10px] text-red-300 hover:text-red-500 transition-colors font-bold uppercase tracking-wider py-1 mt-4">
+                        Clear Saved Data
+                    </button>
                 </div>
             </div>
             
@@ -226,9 +231,8 @@
                     <div class="absolute right-0 top-0 w-16 h-16 bg-white/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                     <h3 id="card-title" class="font-bold text-sm relative z-10">Welcome</h3>
                     <p id="card-detail" class="text-blue-100 text-xs opacity-80 mt-1 relative z-10 truncate">
-                        Initializing System...
+                        Local Mode Active
                     </p>
-                    <div id="user-info" class="hidden"></div>
                 </div>
                 
                 <!-- KPI 1: Active Outlets -->
@@ -295,50 +299,21 @@
     <!-- Leaflet JavaScript -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <!-- Firebase and Application Logic Module -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // =========================================================================
-        // IMPORTANT: FOR LOCAL USE, REPLACE THE VALUES BELOW WITH YOUR FIREBASE CONFIG
-        // =========================================================================
-        const manualFirebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
-            messagingSenderId: "YOUR_SENDER_ID",
-            appId: "YOUR_APP_ID"
-        };
-        // =========================================================================
-
-        // Environment variables (only work in preview, not locally)
-        const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    <!-- Application Logic (No Firebase) -->
+    <script>
+        // Storage Key
+        const STORAGE_KEY = 'outlet_tracker_data_v1';
         
-        // Prefer environment config if available, otherwise use manual config
-        const firebaseConfig = envConfig || manualFirebaseConfig;
-        
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'outlet-tracker-v1';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        let db, auth, map;
-        let currentUserId = null;
-        let markerLayer = L.featureGroup();
+        let map;
+        let markerLayer = L.layerGroup(); // Changed to simple LayerGroup for better control
         let polylineLayer = L.layerGroup();
         let allOutlets = [];
-        let unsubscribe = null;
         let selectedRoutes = new Set(); 
 
         const infoCard = document.getElementById('info-card');
         const cardTitle = document.getElementById('card-title');
         const cardDetail = document.getElementById('card-detail');
-        const userInfo = document.getElementById('user-info');
         
-        const statusDot = document.getElementById('status-dot');
-        const statusText = document.getElementById('status-text');
-
         const invalidBox = document.getElementById('invalid-box');
         const invalidList = document.getElementById('invalid-list');
         const invalidHeader = document.getElementById('invalid-header'); 
@@ -354,6 +329,7 @@
         const routeBtnText = document.getElementById('route-btn-text');
         
         const clearFiltersBtn = document.getElementById('clear-filters-btn');
+        const clearDataBtn = document.getElementById('clear-all-data-btn');
         
         const csvUpload = document.getElementById('csv-upload');
         const fileNameDisplay = document.getElementById('file-name-display');
@@ -362,6 +338,59 @@
 
         const kpiOutlets = document.getElementById('kpi-outlets');
         const kpiDistance = document.getElementById('kpi-distance');
+
+        // --- 1. LOCAL STORAGE HANDLING ---
+
+        const loadData = () => {
+            const data = localStorage.getItem(STORAGE_KEY);
+            if (data) {
+                try {
+                    allOutlets = JSON.parse(data);
+                    cardTitle.textContent = "Data Loaded";
+                    cardDetail.textContent = `${allOutlets.length} records found in local storage.`;
+                    
+                    // Populate Filters
+                    const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
+                    updateSelect(filterArea, areas, filterArea.value);
+                    updateCascadingFilters(0);
+                } catch (e) {
+                    console.error("Data load failed", e);
+                    allOutlets = [];
+                }
+            } else {
+                cardTitle.textContent = "Welcome";
+                cardDetail.textContent = "No data found. Upload a CSV to begin.";
+            }
+        };
+
+        const saveData = (newRecords) => {
+            // Append new records to existing
+            allOutlets = [...allOutlets, ...newRecords];
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(allOutlets));
+                // Refresh View
+                const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
+                updateSelect(filterArea, areas, filterArea.value);
+                updateCascadingFilters(0);
+                cardTitle.textContent = "Success";
+                cardDetail.textContent = `${newRecords.length} new records added.`;
+            } catch (e) {
+                alert("Storage full! Clear some data.");
+            }
+        };
+
+        const clearAllData = () => {
+            if(confirm("Are you sure you want to delete ALL data? This cannot be undone.")) {
+                localStorage.removeItem(STORAGE_KEY);
+                allOutlets = [];
+                applyLocalFilters();
+                cardTitle.textContent = "Cleared";
+                cardDetail.textContent = "All data has been removed.";
+                window.location.reload();
+            }
+        }
+
+        // --- 2. MAP LOGIC ---
 
         const initMap = () => {
             if (typeof L === 'undefined') {
@@ -394,68 +423,11 @@
 
             document.querySelector('.leaflet-control-container').style.visibility = 'visible';
             
-            // Initial Check for File Protocol
-            if (window.location.protocol === 'file:') {
-                cardTitle.textContent = "Security Warning";
-                cardDetail.innerHTML = "Browser blocking Local File.<br>Use a Local Server (e.g., Live Server).";
-                statusText.textContent = "File Mode";
-                statusDot.querySelector('.bg-gray-500').classList.replace('bg-gray-500', 'bg-red-500');
-            } else {
-                cardTitle.textContent = "Welcome";
-                cardDetail.textContent = "Connecting to database...";
-            }
+            loadData(); // Load data after map init
         };
 
-        const initFirebase = async () => {
-            // Check for valid config
-            if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
-                cardTitle.textContent = "Setup Required";
-                cardDetail.innerHTML = "<b class='text-yellow-300'>Action Needed:</b><br>Edit index.html & paste Firebase Keys.";
-                console.error("FIREBASE CONFIG MISSING. Please edit the 'manualFirebaseConfig' object in the script tag.");
-                statusText.textContent = "Config Missing";
-                statusDot.querySelector('.bg-gray-500').classList.replace('bg-gray-500', 'bg-yellow-500');
-                return;
-            }
+        // --- 3. FILTER LOGIC ---
 
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                await setPersistence(auth, browserSessionPersistence);
-
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        userInfo.style.display = 'none'; 
-                        setupRealtimeListener(currentUserId);
-                        cardTitle.textContent = "System Ready";
-                        cardDetail.textContent = "Database connected securely.";
-                        statusText.textContent = "Online";
-                        statusDot.querySelector('.bg-gray-500')?.classList.replace('bg-gray-500', 'bg-green-500');
-                    } else {
-                        currentUserId = null;
-                        userInfo.textContent = "Offline";
-                        userInfo.style.display = 'block';
-                    }
-                });
-
-            } catch (error) {
-                console.error("Firebase init failed:", error);
-                cardTitle.textContent = "Connection Error";
-                cardDetail.innerHTML = "Check API Keys & Domain.<br>" + error.message;
-                statusText.textContent = "Error";
-                statusDot.querySelector('.bg-gray-500')?.classList.replace('bg-gray-500', 'bg-red-500');
-            }
-        };
-
-        // Helper: Generic Update function for standard Dropdowns
         const updateSelect = (selectElement, values, currentValue) => {
             const oldVal = currentValue || selectElement.value;
             const firstOption = selectElement.options[0];
@@ -469,14 +441,10 @@
                 selectElement.appendChild(option);
             });
 
-            if (values.has(oldVal)) {
-                selectElement.value = oldVal;
-            } else {
-                selectElement.value = "";
-            }
+            if (values.has(oldVal)) selectElement.value = oldVal;
+            else selectElement.value = "";
         };
 
-        // New Helper: Update Route Multi-Select
         const updateRouteMultiSelect = (routesSet) => {
             routeList.innerHTML = '';
             selectedRoutes.clear();
@@ -495,10 +463,9 @@
                 
                 const input = document.createElement('input');
                 input.type = 'checkbox';
-                input.className = 'route-checkbox hidden'; // Hide default checkbox
+                input.className = 'route-checkbox hidden'; 
                 input.value = route;
                 
-                // Custom checkbox visual
                 const customCheck = document.createElement('div');
                 customCheck.className = 'w-4 h-4 border border-gray-300 rounded flex items-center justify-center bg-white transition-colors';
                 customCheck.innerHTML = `<svg class="w-3 h-3 text-white hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>`;
@@ -511,22 +478,13 @@
                 label.appendChild(customCheck);
                 label.appendChild(span);
                 
-                // Event listener for selection
                 input.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        selectedRoutes.add(e.target.value);
-                    } else {
-                        selectedRoutes.delete(e.target.value);
-                    }
+                    if (e.target.checked) selectedRoutes.add(e.target.value);
+                    else selectedRoutes.delete(e.target.value);
                     
-                    // Update Button Text
-                    if (selectedRoutes.size === 0) {
-                        routeBtnText.textContent = "All Routes";
-                    } else if (selectedRoutes.size === 1) {
-                        routeBtnText.textContent = Array.from(selectedRoutes)[0];
-                    } else {
-                        routeBtnText.textContent = `${selectedRoutes.size} Routes Selected`;
-                    }
+                    if (selectedRoutes.size === 0) routeBtnText.textContent = "All Routes";
+                    else if (selectedRoutes.size === 1) routeBtnText.textContent = Array.from(selectedRoutes)[0];
+                    else routeBtnText.textContent = `${selectedRoutes.size} Routes Selected`;
                     
                     applyLocalFilters();
                 });
@@ -563,31 +521,10 @@
                 if (filterTown.value) routeOutlets = routeOutlets.filter(d => d.town_name === filterTown.value);
 
                 const routes = new Set(routeOutlets.map(d => d.route).filter(Boolean));
-                updateRouteMultiSelect(routes); // Use new function for routes
+                updateRouteMultiSelect(routes); 
             }
 
             applyLocalFilters();
-        };
-
-        const setupRealtimeListener = (userId) => {
-            if (!db || !userId) return;
-            if (unsubscribe) unsubscribe();
-
-            const collectionPath = `artifacts/${appId}/users/${userId}/outlets`;
-            const q = query(collection(db, collectionPath), orderBy("timestamp", "desc"));
-            
-            unsubscribe = onSnapshot(q, (snapshot) => {
-                allOutlets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
-                updateSelect(filterArea, areas, filterArea.value);
-                
-                updateCascadingFilters(0);
-
-            }, (error) => {
-                cardTitle.textContent = "Data Error";
-                cardDetail.textContent = error.message;
-            });
         };
 
         const applyLocalFilters = () => {
@@ -595,14 +532,12 @@
             const fArea = filterArea.value;
             const fTerritory = filterTerritory.value;
             const fTown = filterTown.value;
-            // fRoute removed, using selectedRoutes Set instead
 
             const filteredData = allOutlets.filter(item => {
                 if (fArea && item.area_name !== fArea) return false;
                 if (fTerritory && item.territory_name !== fTerritory) return false;
                 if (fTown && item.town_name !== fTown) return false;
                 
-                // Multi-select Logic for Route
                 if (selectedRoutes.size > 0 && !selectedRoutes.has(item.route)) return false;
 
                 if (searchTerm) {
@@ -749,9 +684,7 @@
             filterTown.value = "";
             selectedRoutes.clear();
             routeBtnText.textContent = "All Routes";
-            // Uncheck checkboxes visually
             document.querySelectorAll('.route-checkbox').forEach(cb => cb.checked = false);
-            
             updateCascadingFilters(0); 
         };
 
@@ -793,7 +726,7 @@
                     lng: parseFloat(rawRecord[detectedHeaders.lng]),
                     route: rawRecord[detectedHeaders.route],
                     outletName: rawRecord[detectedHeaders.outletName],
-                    timestamp: new Date()
+                    timestamp: new Date().toISOString() // String for Local Storage
                 };
 
                 for (const header of rawHeaders) {
@@ -812,7 +745,7 @@
 
         const handleCsvUpload = async () => {
             const file = csvUpload.files[0];
-            if (!file || !currentUserId) return;
+            if (!file) return;
 
             uploadCsvBtn.disabled = true;
             uploadStatus.textContent = "Processing...";
@@ -827,33 +760,20 @@
                     return;
                 }
                 
-                let uploadedCount = 0;
-                const collectionPath = `artifacts/${appId}/users/${currentUserId}/outlets`;
-                const batchSize = 10; 
+                // Save to Local Storage instead of Firebase
+                saveData(parseResult.data);
                 
-                try {
-                    for (let i = 0; i < parseResult.data.length; i += batchSize) {
-                        const batch = parseResult.data.slice(i, i + batchSize);
-                        await Promise.all(batch.map(rec => addDoc(collection(db, collectionPath), rec)));
-                        uploadedCount += batch.length;
-                        uploadStatus.textContent = `Uploading... ${uploadedCount}/${parseResult.data.length}`;
-                    }
-                    uploadStatus.textContent = "Upload Complete";
-                } catch (error) {
-                    console.error(error);
-                    uploadStatus.textContent = "Failed";
-                } finally {
-                    csvUpload.value = '';
-                    fileNameDisplay.classList.add('hidden');
-                    uploadCsvBtn.disabled = false;
-                    setTimeout(() => { uploadStatus.textContent = "Req: Lat, Lng, Route, Outlet Name"; }, 3000);
-                }
+                uploadStatus.textContent = "Upload Complete";
+                csvUpload.value = '';
+                fileNameDisplay.classList.add('hidden');
+                uploadCsvBtn.disabled = false;
+                setTimeout(() => { uploadStatus.textContent = "Req: Lat, Lng, Route, Outlet Name"; }, 3000);
             };
             reader.readAsText(file);
         };
         
         csvUpload.addEventListener('change', () => {
-            if (csvUpload.files.length > 0 && currentUserId) {
+            if (csvUpload.files.length > 0) {
                 uploadCsvBtn.disabled = false;
                 fileNameDisplay.textContent = csvUpload.files[0].name;
                 fileNameDisplay.classList.remove('hidden');
@@ -869,13 +789,11 @@
         filterTerritory.addEventListener('change', () => updateCascadingFilters(1));
         filterTown.addEventListener('change', () => updateCascadingFilters(2));
         
-        // Multi-select dropdown toggle logic
         routeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             routeList.classList.toggle('hidden');
         });
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!routeBtn.contains(e.target) && !routeList.contains(e.target)) {
                 routeList.classList.add('hidden');
@@ -883,10 +801,9 @@
         });
         
         clearFiltersBtn.addEventListener('click', clearFilters);
+        clearDataBtn.addEventListener('click', clearAllData);
 
         document.addEventListener('DOMContentLoaded', initMap);
-
-        initFirebase();
     </script>
 </body>
 </html>
