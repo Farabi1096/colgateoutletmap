@@ -105,6 +105,15 @@
             box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.05);
         }
 
+        /* Checkbox Styling for Routes */
+        .route-checkbox:checked + div {
+            background-color: #E01933;
+            border-color: #E01933;
+        }
+        .route-checkbox:checked + div svg {
+            display: block;
+        }
+
         /* Fade in animation */
         .fade-in {
             animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
@@ -141,7 +150,7 @@
         <div class="lg:col-span-3 flex flex-col gap-4 h-full">
 
             <!-- Filters Section -->
-            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 shrink-0">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 shrink-0 relative z-50">
                 <h2 class="text-gray-800 font-bold text-sm mb-3 flex items-center gap-2 uppercase tracking-wide">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-colgate-red" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
@@ -158,7 +167,20 @@
                     <select id="filter-area" class="min-input w-full p-2 rounded-lg text-xs text-gray-600"><option value="">All Areas</option></select>
                     <select id="filter-territory" class="min-input w-full p-2 rounded-lg text-xs text-gray-600"><option value="">All Territories</option></select>
                     <select id="filter-town" class="min-input w-full p-2 rounded-lg text-xs text-gray-600"><option value="">All Towns</option></select>
-                    <select id="filter-route" class="min-input w-full p-2 rounded-lg text-xs text-gray-600"><option value="">All Routes</option></select>
+                    
+                    <!-- NEW MULTI-SELECT ROUTE FILTER -->
+                    <div class="relative">
+                        <button id="route-multiselect-btn" class="min-input w-full p-2 rounded-lg text-xs text-gray-600 text-left flex justify-between items-center bg-white cursor-pointer">
+                            <span id="route-btn-text" class="truncate">All Routes</span>
+                            <svg class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+                        
+                        <!-- Dropdown Content -->
+                        <div id="route-dropdown-list" class="hidden absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-60 overflow-y-auto p-2 custom-scrollbar">
+                            <!-- JS will populate checkboxes here -->
+                            <div class="text-xs text-gray-400 text-center py-2">Select Town first</div>
+                        </div>
+                    </div>
                     
                     <button id="clear-filters-btn" class="w-full text-[10px] text-gray-400 hover:text-colgate-red transition-colors font-bold uppercase tracking-wider py-1 border-t border-dashed border-gray-200 mt-2">
                         Reset All
@@ -167,7 +189,7 @@
             </div>
             
             <!-- CSV Upload Section -->
-            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex-1 flex flex-col">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex-1 flex flex-col z-0">
                 <h2 class="text-gray-800 font-bold text-sm mb-3 flex items-center gap-2 uppercase tracking-wide shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-colgate-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
@@ -248,7 +270,7 @@
 
         </div>
 
-        <!-- NEW: Invalid/Outside Region Section (Full Width Bottom) -->
+        <!-- Invalid/Outside Region Section -->
         <div id="invalid-box" class="lg:col-span-12 hidden bg-white border border-red-100 rounded-xl p-4 shadow-sm mt-2">
             <div class="flex items-center gap-3 mb-3 border-b border-red-100 pb-2">
                 <div class="h-8 w-8 bg-red-50 rounded-full flex items-center justify-center shrink-0">
@@ -257,7 +279,6 @@
                     </svg>
                 </div>
                 <div>
-                    <!-- Added ID here -->
                     <h3 id="invalid-header" class="text-colgate-red font-bold text-sm uppercase tracking-wide">Data Anomalies</h3>
                     <p class="text-[10px] text-gray-500">Outlets with coordinates outside Bangladesh (Lat: 20-29, Lng: 86-95)</p>
                 </div>
@@ -291,6 +312,7 @@
         let polylineLayer = L.layerGroup();
         let allOutlets = [];
         let unsubscribe = null;
+        let selectedRoutes = new Set(); // Stores multiple selected routes
 
         const infoCard = document.getElementById('info-card');
         const cardTitle = document.getElementById('card-title');
@@ -299,13 +321,18 @@
         
         const invalidBox = document.getElementById('invalid-box');
         const invalidList = document.getElementById('invalid-list');
-        const invalidHeader = document.getElementById('invalid-header'); // New Reference
+        const invalidHeader = document.getElementById('invalid-header'); 
 
         const searchInput = document.getElementById('search-input');
         const filterArea = document.getElementById('filter-area');
         const filterTerritory = document.getElementById('filter-territory');
         const filterTown = document.getElementById('filter-town');
-        const filterRoute = document.getElementById('filter-route');
+        
+        // Multi-select elements
+        const routeBtn = document.getElementById('route-multiselect-btn');
+        const routeList = document.getElementById('route-dropdown-list');
+        const routeBtnText = document.getElementById('route-btn-text');
+        
         const clearFiltersBtn = document.getElementById('clear-filters-btn');
         
         const csvUpload = document.getElementById('csv-upload');
@@ -386,7 +413,7 @@
             }
         };
 
-        // Helper: Generic Update function for Dropdowns
+        // Helper: Generic Update function for standard Dropdowns
         const updateSelect = (selectElement, values, currentValue) => {
             const oldVal = currentValue || selectElement.value;
             const firstOption = selectElement.options[0];
@@ -400,7 +427,6 @@
                 selectElement.appendChild(option);
             });
 
-            // Try to keep selection, otherwise it defaults to "" (All)
             if (values.has(oldVal)) {
                 selectElement.value = oldVal;
             } else {
@@ -408,7 +434,65 @@
             }
         };
 
-        // New Logic: Hierarchical Filter Updates
+        // New Helper: Update Route Multi-Select
+        const updateRouteMultiSelect = (routesSet) => {
+            routeList.innerHTML = '';
+            selectedRoutes.clear();
+            routeBtnText.textContent = "All Routes";
+
+            if (routesSet.size === 0) {
+                routeList.innerHTML = '<div class="text-xs text-gray-400 text-center py-2">No routes found</div>';
+                return;
+            }
+
+            const sortedRoutes = Array.from(routesSet).sort();
+
+            sortedRoutes.forEach(route => {
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer rounded';
+                
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.className = 'route-checkbox hidden'; // Hide default checkbox
+                input.value = route;
+                
+                // Custom checkbox visual
+                const customCheck = document.createElement('div');
+                customCheck.className = 'w-4 h-4 border border-gray-300 rounded flex items-center justify-center bg-white transition-colors';
+                customCheck.innerHTML = `<svg class="w-3 h-3 text-white hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>`;
+
+                const span = document.createElement('span');
+                span.className = 'text-xs text-gray-700';
+                span.textContent = route;
+
+                label.appendChild(input);
+                label.appendChild(customCheck);
+                label.appendChild(span);
+                
+                // Event listener for selection
+                input.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedRoutes.add(e.target.value);
+                    } else {
+                        selectedRoutes.delete(e.target.value);
+                    }
+                    
+                    // Update Button Text
+                    if (selectedRoutes.size === 0) {
+                        routeBtnText.textContent = "All Routes";
+                    } else if (selectedRoutes.size === 1) {
+                        routeBtnText.textContent = Array.from(selectedRoutes)[0];
+                    } else {
+                        routeBtnText.textContent = `${selectedRoutes.size} Routes Selected`;
+                    }
+                    
+                    applyLocalFilters();
+                });
+
+                routeList.appendChild(label);
+            });
+        };
+
         const updateCascadingFilters = (changedLevel) => {
             const fArea = filterArea.value;
             const fTerritory = filterTerritory.value;
@@ -416,9 +500,7 @@
 
             if (changedLevel <= 0) {
                 let areaOutlets = allOutlets;
-                if (fArea) {
-                    areaOutlets = areaOutlets.filter(d => d.area_name === fArea);
-                }
+                if (fArea) areaOutlets = areaOutlets.filter(d => d.area_name === fArea);
                 const territories = new Set(areaOutlets.map(d => d.territory_name).filter(Boolean));
                 updateSelect(filterTerritory, territories, filterTerritory.value);
             }
@@ -439,7 +521,7 @@
                 if (filterTown.value) routeOutlets = routeOutlets.filter(d => d.town_name === filterTown.value);
 
                 const routes = new Set(routeOutlets.map(d => d.route).filter(Boolean));
-                updateSelect(filterRoute, routes, filterRoute.value);
+                updateRouteMultiSelect(routes); // Use new function for routes
             }
 
             applyLocalFilters();
@@ -471,13 +553,16 @@
             const fArea = filterArea.value;
             const fTerritory = filterTerritory.value;
             const fTown = filterTown.value;
-            const fRoute = filterRoute.value;
+            // fRoute removed, using selectedRoutes Set instead
 
             const filteredData = allOutlets.filter(item => {
                 if (fArea && item.area_name !== fArea) return false;
                 if (fTerritory && item.territory_name !== fTerritory) return false;
                 if (fTown && item.town_name !== fTown) return false;
-                if (fRoute && item.route !== fRoute) return false;
+                
+                // Multi-select Logic for Route
+                if (selectedRoutes.size > 0 && !selectedRoutes.has(item.route)) return false;
+
                 if (searchTerm) {
                     const searchString = `${item.outletName} ${item.route} ${item.outlet_code || ''} ${item.town_name || ''}`.toLowerCase();
                     if (!searchString.includes(searchTerm)) return false;
@@ -537,12 +622,9 @@
 
             let totalMeters = 0;
 
-            // Updated Distance Calculation Logic using Nearest Neighbor Sort
             Object.entries(routeGroups).forEach(([route, items]) => {
                 if (items.length < 2) return;
 
-                // Sort items by proximity (Nearest Neighbor) to calculate realistic travel path
-                // Start with the chronologically first item (reverse of desc timestamp)
                 let remaining = [...items].reverse(); 
                 const sortedGeoItems = [remaining.shift()]; 
                 
@@ -561,15 +643,11 @@
                         }
                     });
 
-                    // Add distance to total
                     totalMeters += minDistance;
-                    
-                    // Move item from remaining to sorted
                     sortedGeoItems.push(remaining[nearestIndex]);
                     remaining.splice(nearestIndex, 1);
                 }
 
-                // Draw the optimized path
                 const latlngs = sortedGeoItems.map(d => [d.lat, d.lng]);
 
                 if (latlngs.length > 1) {
@@ -627,7 +705,11 @@
             filterArea.value = "";
             filterTerritory.value = "";
             filterTown.value = "";
-            filterRoute.value = "";
+            selectedRoutes.clear();
+            routeBtnText.textContent = "All Routes";
+            // Uncheck checkboxes visually
+            document.querySelectorAll('.route-checkbox').forEach(cb => cb.checked = false);
+            
             updateCascadingFilters(0); 
         };
 
@@ -741,11 +823,22 @@
 
         searchInput.addEventListener('input', applyLocalFilters);
         
-        // Cascading Filter Listeners
         filterArea.addEventListener('change', () => updateCascadingFilters(0));
         filterTerritory.addEventListener('change', () => updateCascadingFilters(1));
         filterTown.addEventListener('change', () => updateCascadingFilters(2));
-        filterRoute.addEventListener('change', () => updateCascadingFilters(3));
+        
+        // Multi-select dropdown toggle logic
+        routeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            routeList.classList.toggle('hidden');
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!routeBtn.contains(e.target) && !routeList.contains(e.target)) {
+                routeList.classList.add('hidden');
+            }
+        });
         
         clearFiltersBtn.addEventListener('click', clearFilters);
 
