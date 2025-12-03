@@ -138,11 +138,11 @@
                 <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide mt-1">Bangladesh Retail Mapping</p>
             </div>
              <div id="system-status" class="hidden md:flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-gray-200 shadow-sm">
-                <span class="relative flex h-2 w-2">
-                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                <span id="status-dot" class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gray-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-gray-500"></span>
                 </span>
-                <span class="text-xs font-bold text-gray-600">System Online</span>
+                <span id="status-text" class="text-xs font-bold text-gray-600">Initializing...</span>
             </div>
         </div>
 
@@ -224,9 +224,9 @@
                 <!-- Status/Info Card -->
                 <div id="info-card" class="bg-colgate-blue rounded-xl p-4 text-white shadow-md flex flex-col justify-center relative overflow-hidden group">
                     <div class="absolute right-0 top-0 w-16 h-16 bg-white/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                    <h3 id="card-title" class="font-bold text-sm relative z-10">Select an Outlet</h3>
+                    <h3 id="card-title" class="font-bold text-sm relative z-10">Welcome</h3>
                     <p id="card-detail" class="text-blue-100 text-xs opacity-80 mt-1 relative z-10 truncate">
-                        Click markers to view details.
+                        Initializing System...
                     </p>
                     <div id="user-info" class="hidden"></div>
                 </div>
@@ -336,6 +336,9 @@
         const cardDetail = document.getElementById('card-detail');
         const userInfo = document.getElementById('user-info');
         
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+
         const invalidBox = document.getElementById('invalid-box');
         const invalidList = document.getElementById('invalid-list');
         const invalidHeader = document.getElementById('invalid-header'); 
@@ -391,16 +394,26 @@
 
             document.querySelector('.leaflet-control-container').style.visibility = 'visible';
             
-            cardTitle.textContent = "Welcome";
-            cardDetail.textContent = "Connecting to database...";
+            // Initial Check for File Protocol
+            if (window.location.protocol === 'file:') {
+                cardTitle.textContent = "Security Warning";
+                cardDetail.innerHTML = "Browser blocking Local File.<br>Use a Local Server (e.g., Live Server).";
+                statusText.textContent = "File Mode";
+                statusDot.querySelector('.bg-gray-500').classList.replace('bg-gray-500', 'bg-red-500');
+            } else {
+                cardTitle.textContent = "Welcome";
+                cardDetail.textContent = "Connecting to database...";
+            }
         };
 
         const initFirebase = async () => {
             // Check for valid config
             if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
                 cardTitle.textContent = "Setup Required";
-                cardDetail.innerHTML = "<b class='text-red-300'>Missing Configuration.</b><br>Edit index.html and add your Firebase Config keys.";
+                cardDetail.innerHTML = "<b class='text-yellow-300'>Action Needed:</b><br>Edit index.html & paste Firebase Keys.";
                 console.error("FIREBASE CONFIG MISSING. Please edit the 'manualFirebaseConfig' object in the script tag.");
+                statusText.textContent = "Config Missing";
+                statusDot.querySelector('.bg-gray-500').classList.replace('bg-gray-500', 'bg-yellow-500');
                 return;
             }
 
@@ -422,8 +435,10 @@
                         currentUserId = user.uid;
                         userInfo.style.display = 'none'; 
                         setupRealtimeListener(currentUserId);
-                        cardTitle.textContent = "Data Loaded";
-                        cardDetail.textContent = "Explore the map.";
+                        cardTitle.textContent = "System Ready";
+                        cardDetail.textContent = "Database connected securely.";
+                        statusText.textContent = "Online";
+                        statusDot.querySelector('.bg-gray-500')?.classList.replace('bg-gray-500', 'bg-green-500');
                     } else {
                         currentUserId = null;
                         userInfo.textContent = "Offline";
@@ -434,7 +449,9 @@
             } catch (error) {
                 console.error("Firebase init failed:", error);
                 cardTitle.textContent = "Connection Error";
-                cardDetail.textContent = "Check console logs.";
+                cardDetail.innerHTML = "Check API Keys & Domain.<br>" + error.message;
+                statusText.textContent = "Error";
+                statusDot.querySelector('.bg-gray-500')?.classList.replace('bg-gray-500', 'bg-red-500');
             }
         };
 
