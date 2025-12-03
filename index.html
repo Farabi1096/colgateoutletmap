@@ -142,7 +142,7 @@
                   <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                 </span>
-                <span class="text-xs font-bold text-gray-600">Local Mode</span>
+                <span class="text-xs font-bold text-gray-600">Local DB</span>
             </div>
         </div>
 
@@ -231,7 +231,7 @@
                     <div class="absolute right-0 top-0 w-16 h-16 bg-white/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                     <h3 id="card-title" class="font-bold text-sm relative z-10">Welcome</h3>
                     <p id="card-detail" class="text-blue-100 text-xs opacity-80 mt-1 relative z-10 truncate">
-                        Local Mode Active
+                        Large Data Mode Ready
                     </p>
                 </div>
                 
@@ -299,13 +299,16 @@
     <!-- Leaflet JavaScript -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <!-- Application Logic (No Firebase) -->
+    <!-- Application Logic (IndexedDB for Large Data) -->
     <script>
-        // Storage Key
-        const STORAGE_KEY = 'outlet_tracker_data_v1';
-        
+        // --- INDEXED DB SETUP ---
+        const DB_NAME = 'OutletTrackerDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'outlets';
+
+        let dbPromise = null;
         let map;
-        let markerLayer = L.layerGroup(); // Changed to simple LayerGroup for better control
+        let markerLayer = L.layerGroup(); 
         let polylineLayer = L.layerGroup();
         let allOutlets = [];
         let selectedRoutes = new Set(); 
@@ -323,7 +326,6 @@
         const filterTerritory = document.getElementById('filter-territory');
         const filterTown = document.getElementById('filter-town');
         
-        // Multi-select elements
         const routeBtn = document.getElementById('route-multiselect-btn');
         const routeList = document.getElementById('route-dropdown-list');
         const routeBtnText = document.getElementById('route-btn-text');
@@ -339,58 +341,119 @@
         const kpiOutlets = document.getElementById('kpi-outlets');
         const kpiDistance = document.getElementById('kpi-distance');
 
-        // --- 1. LOCAL STORAGE HANDLING ---
+        // --- 1. DB HELPER FUNCTIONS ---
 
-        const loadData = () => {
-            const data = localStorage.getItem(STORAGE_KEY);
-            if (data) {
-                try {
-                    allOutlets = JSON.parse(data);
+        const openDatabase = () => {
+            if (dbPromise) return dbPromise;
+
+            dbPromise = new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        // KeyPath auto-increment allows storing mostly anything, though we could use an ID
+                        db.createObjectStore(STORE_NAME, { autoIncrement: true });
+                    }
+                };
+
+                request.onsuccess = (event) => {
+                    resolve(event.target.result);
+                };
+
+                request.onerror = (event) => {
+                    reject("Database error: " + event.target.errorCode);
+                };
+            });
+            return dbPromise;
+        };
+
+        const saveDataToIDB = async (newRecords) => {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], "readwrite");
+                const store = transaction.objectStore(STORE_NAME);
+
+                // Use transaction oncomplete for large batch performance
+                transaction.oncomplete = () => {
+                    resolve();
+                };
+                transaction.onerror = (e) => reject(e);
+
+                newRecords.forEach(record => {
+                    store.add(record);
+                });
+            });
+        };
+
+        const loadDataFromIDB = async () => {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], "readonly");
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.getAll();
+
+                request.onsuccess = () => {
+                    resolve(request.result);
+                };
+                request.onerror = (e) => reject(e);
+            });
+        };
+
+        const clearDataFromIDB = async () => {
+            const db = await openDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], "readwrite");
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.clear();
+
+                request.onsuccess = () => resolve();
+                request.onerror = (e) => reject(e);
+            });
+        };
+
+        // --- 2. DATA MANAGEMENT ---
+
+        const loadData = async () => {
+            try {
+                cardDetail.textContent = "Loading data from database...";
+                allOutlets = await loadDataFromIDB();
+                
+                if (allOutlets.length > 0) {
                     cardTitle.textContent = "Data Loaded";
-                    cardDetail.textContent = `${allOutlets.length} records found in local storage.`;
+                    cardDetail.textContent = `${allOutlets.length.toLocaleString()} records active.`;
                     
                     // Populate Filters
                     const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
                     updateSelect(filterArea, areas, filterArea.value);
                     updateCascadingFilters(0);
-                } catch (e) {
-                    console.error("Data load failed", e);
-                    allOutlets = [];
+                } else {
+                    cardTitle.textContent = "Welcome";
+                    cardDetail.textContent = "No data found. Upload a CSV to begin.";
                 }
-            } else {
-                cardTitle.textContent = "Welcome";
-                cardDetail.textContent = "No data found. Upload a CSV to begin.";
-            }
-        };
-
-        const saveData = (newRecords) => {
-            // Append new records to existing
-            allOutlets = [...allOutlets, ...newRecords];
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(allOutlets));
-                // Refresh View
-                const areas = new Set(allOutlets.map(d => d.area_name).filter(Boolean));
-                updateSelect(filterArea, areas, filterArea.value);
-                updateCascadingFilters(0);
-                cardTitle.textContent = "Success";
-                cardDetail.textContent = `${newRecords.length} new records added.`;
             } catch (e) {
-                alert("Storage full! Clear some data.");
+                console.error("IDB Error", e);
+                cardTitle.textContent = "Error";
+                cardDetail.textContent = "Could not load local database.";
             }
         };
 
-        const clearAllData = () => {
+        const clearAllData = async () => {
             if(confirm("Are you sure you want to delete ALL data? This cannot be undone.")) {
-                localStorage.removeItem(STORAGE_KEY);
-                allOutlets = [];
-                applyLocalFilters();
-                cardTitle.textContent = "Cleared";
-                cardDetail.textContent = "All data has been removed.";
-                window.location.reload();
+                try {
+                    await clearDataFromIDB();
+                    allOutlets = [];
+                    applyLocalFilters();
+                    cardTitle.textContent = "Cleared";
+                    cardDetail.textContent = "All data has been removed.";
+                    window.location.reload();
+                } catch (e) {
+                    alert("Failed to clear data.");
+                }
             }
         }
 
-        // --- 2. MAP LOGIC ---
+        // --- 3. MAP LOGIC ---
 
         const initMap = () => {
             if (typeof L === 'undefined') {
@@ -426,7 +489,7 @@
             loadData(); // Load data after map init
         };
 
-        // --- 3. FILTER LOGIC ---
+        // --- 4. FILTER LOGIC ---
 
         const updateSelect = (selectElement, values, currentValue) => {
             const oldVal = currentValue || selectElement.value;
@@ -566,89 +629,95 @@
             markerLayer.clearLayers(); 
             polylineLayer.clearLayers(); 
             
-            kpiOutlets.textContent = dataToRender.length;
+            kpiOutlets.textContent = dataToRender.length.toLocaleString();
 
-            dataToRender.forEach(data => {
+            // Render limit to prevent browser crash with 20k markers
+            // Only render first 2000 points until zoomed in, or render circles efficiently
+            const RENDER_LIMIT = 2000;
+            const renderSet = dataToRender.length > RENDER_LIMIT ? dataToRender.slice(0, RENDER_LIMIT) : dataToRender;
+
+            if(dataToRender.length > RENDER_LIMIT) {
+                cardDetail.innerHTML = `<span class="text-amber-300">Showing 2000 of ${dataToRender.length} outlets. Filter to see specific data.</span>`;
+            }
+
+            renderSet.forEach(data => {
                 const marker = L.circleMarker([data.lat, data.lng], {
-                    radius: 6,
+                    radius: 5,
                     fillColor: "#E01933", 
                     color: "#FFFFFF",
-                    weight: 1.5,
+                    weight: 1,
                     opacity: 1,
-                    fillOpacity: 1
+                    fillOpacity: 0.9
                 }).addTo(markerLayer);
 
+                marker.bindPopup(`<div style="color:#E01933; font-weight:bold; font-size:12px">${data.outletName}</div><div style="font-size:10px; color:#666">${data.route}</div>`);
+                
                 marker.on('click', () => {
                     let detailHtml = `<span class="opacity-75">Outlet:</span> <b>${data.outletName}</b>`;
                     if(data.route) detailHtml += `<br><span class="opacity-75">Route:</span> <b>${data.route}</b>`;
-                    if(data.town_name) detailHtml += `<br><span class="opacity-75">Town:</span> ${data.town_name}`;
-                    
                     cardTitle.textContent = "Outlet Details";
                     cardDetail.innerHTML = detailHtml;
                 });
-                
-                marker.bindPopup(`<div style="color:#E01933; font-weight:bold; font-size:12px">${data.outletName}</div><div style="font-size:10px; color:#666">${data.route}</div>`);
             });
 
-            const routeGroups = {};
-            dataToRender.forEach(item => {
-                const routeName = item.route || 'Unassigned';
-                if (!routeGroups[routeName]) routeGroups[routeName] = [];
-                routeGroups[routeName].push(item);
-            });
+            // Route Lines - Calculation logic (only calculate if filtered to manageable number)
+            if (dataToRender.length < 500) {
+                const routeGroups = {};
+                dataToRender.forEach(item => {
+                    const routeName = item.route || 'Unassigned';
+                    if (!routeGroups[routeName]) routeGroups[routeName] = [];
+                    routeGroups[routeName].push(item);
+                });
 
-            let totalMeters = 0;
+                let totalMeters = 0;
 
-            Object.entries(routeGroups).forEach(([route, items]) => {
-                if (items.length < 2) return;
+                Object.entries(routeGroups).forEach(([route, items]) => {
+                    if (items.length < 2) return;
 
-                let remaining = [...items].reverse(); 
-                const sortedGeoItems = [remaining.shift()]; 
-                
-                while (remaining.length > 0) {
-                    const lastItem = sortedGeoItems[sortedGeoItems.length - 1];
-                    const lastLatLng = L.latLng(lastItem.lat, lastItem.lng);
+                    let remaining = [...items].reverse(); 
+                    const sortedGeoItems = [remaining.shift()]; 
                     
-                    let nearestIndex = -1;
-                    let minDistance = Infinity;
+                    while (remaining.length > 0) {
+                        const lastItem = sortedGeoItems[sortedGeoItems.length - 1];
+                        const lastLatLng = L.latLng(lastItem.lat, lastItem.lng);
+                        let nearestIndex = -1;
+                        let minDistance = Infinity;
 
-                    remaining.forEach((item, index) => {
-                        const dist = lastLatLng.distanceTo(L.latLng(item.lat, item.lng));
-                        if (dist < minDistance) {
-                            minDistance = dist;
-                            nearestIndex = index;
-                        }
-                    });
+                        remaining.forEach((item, index) => {
+                            const dist = lastLatLng.distanceTo(L.latLng(item.lat, item.lng));
+                            if (dist < minDistance) {
+                                minDistance = dist;
+                                nearestIndex = index;
+                            }
+                        });
 
-                    totalMeters += minDistance;
-                    sortedGeoItems.push(remaining[nearestIndex]);
-                    remaining.splice(nearestIndex, 1);
-                }
+                        totalMeters += minDistance;
+                        sortedGeoItems.push(remaining[nearestIndex]);
+                        remaining.splice(nearestIndex, 1);
+                    }
 
-                const latlngs = sortedGeoItems.map(d => [d.lat, d.lng]);
+                    const latlngs = sortedGeoItems.map(d => [d.lat, d.lng]);
 
-                if (latlngs.length > 1) {
-                    L.polyline(latlngs, {
-                        color: '#002169', 
-                        weight: 2,
-                        opacity: 0.6,
-                        dashArray: '4, 4', 
-                        lineJoin: 'round'
-                    }).addTo(polylineLayer).bindPopup(`Route: ${route}`);
-                }
-            });
+                    if (latlngs.length > 1) {
+                        L.polyline(latlngs, {
+                            color: '#002169', 
+                            weight: 2,
+                            opacity: 0.5,
+                            dashArray: '4, 4', 
+                            lineJoin: 'round'
+                        }).addTo(polylineLayer).bindPopup(`Route: ${route}`);
+                    }
+                });
 
-            const totalKm = (totalMeters / 1000).toFixed(1);
-            kpiDistance.innerHTML = `${totalKm} <span class="text-xs font-semibold text-gray-400">km</span>`;
+                const totalKm = (totalMeters / 1000).toFixed(1);
+                kpiDistance.innerHTML = `${totalKm} <span class="text-xs font-semibold text-gray-400">km</span>`;
+            } else {
+                kpiDistance.innerHTML = `- <span class="text-xs font-semibold text-gray-400">km</span>`;
+            }
 
-            if (dataToRender.length > 0) {
+            if (renderSet.length > 0 && renderSet.length < 5000) {
                 try {
-                    map.fitBounds(markerLayer.getBounds(), {
-                        padding: [50, 50],
-                        maxZoom: 15,
-                        animate: true,
-                        duration: 1.0 
-                    });
+                    map.fitBounds(markerLayer.getBounds(), { padding: [20, 20], maxZoom: 14 });
                 } catch (e) { }
             }
         };
@@ -660,7 +729,10 @@
                 invalidBox.classList.remove('hidden');
                 invalidHeader.textContent = `Data Anomalies (${dataList.length})`;
                 
-                dataList.forEach(data => {
+                // Only render first 100 errors to prevent lag
+                const displayList = dataList.slice(0, 100);
+                
+                displayList.forEach(data => {
                     const item = document.createElement('div');
                     item.className = 'invalid-list-item flex-shrink-0 w-64 bg-red-50 p-2 rounded border border-red-100 text-[10px] text-gray-600';
                     item.innerHTML = `
@@ -684,7 +756,9 @@
             filterTown.value = "";
             selectedRoutes.clear();
             routeBtnText.textContent = "All Routes";
+            // Uncheck checkboxes visually
             document.querySelectorAll('.route-checkbox').forEach(cb => cb.checked = false);
+            
             updateCascadingFilters(0); 
         };
 
@@ -712,6 +786,7 @@
             }
             
             const data = [];
+            // Parse CSV Loop
             for (let i = 1; i < lines.length; i++) {
                 const values = lines[i].trim().split(',');
                 if (values.length < rawHeaders.length) continue; 
@@ -726,7 +801,7 @@
                     lng: parseFloat(rawRecord[detectedHeaders.lng]),
                     route: rawRecord[detectedHeaders.route],
                     outletName: rawRecord[detectedHeaders.outletName],
-                    timestamp: new Date().toISOString() // String for Local Storage
+                    timestamp: new Date().toISOString()
                 };
 
                 for (const header of rawHeaders) {
@@ -748,7 +823,7 @@
             if (!file) return;
 
             uploadCsvBtn.disabled = true;
-            uploadStatus.textContent = "Processing...";
+            uploadStatus.textContent = "Parsing...";
 
             const reader = new FileReader();
             reader.onload = async (e) => {
@@ -760,14 +835,27 @@
                     return;
                 }
                 
-                // Save to Local Storage instead of Firebase
-                saveData(parseResult.data);
+                uploadStatus.textContent = `Saving ${parseResult.data.length.toLocaleString()} records...`;
                 
-                uploadStatus.textContent = "Upload Complete";
-                csvUpload.value = '';
-                fileNameDisplay.classList.add('hidden');
-                uploadCsvBtn.disabled = false;
-                setTimeout(() => { uploadStatus.textContent = "Req: Lat, Lng, Route, Outlet Name"; }, 3000);
+                // Save to IndexedDB
+                try {
+                    await saveDataToIDB(parseResult.data);
+                    
+                    // Reload data from DB to memory to refresh UI
+                    await loadData();
+                    
+                    uploadStatus.textContent = "Upload Complete!";
+                    csvUpload.value = '';
+                    fileNameDisplay.classList.add('hidden');
+                    setTimeout(() => { 
+                        uploadStatus.textContent = "Req: Lat, Lng, Route, Outlet Name"; 
+                        uploadCsvBtn.disabled = false;
+                    }, 2000);
+                } catch (e) {
+                    console.error(e);
+                    uploadStatus.textContent = "Save Failed (DB Error)";
+                    uploadCsvBtn.disabled = false;
+                }
             };
             reader.readAsText(file);
         };
