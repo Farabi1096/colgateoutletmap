@@ -301,9 +301,26 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global variables provided by the environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // =========================================================================
+        // IMPORTANT: FOR LOCAL USE, REPLACE THE VALUES BELOW WITH YOUR FIREBASE CONFIG
+        // =========================================================================
+        const manualFirebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        // =========================================================================
+
+        // Environment variables (only work in preview, not locally)
+        const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        
+        // Prefer environment config if available, otherwise use manual config
+        const firebaseConfig = envConfig || manualFirebaseConfig;
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'outlet-tracker-v1';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
         let db, auth, map;
@@ -312,7 +329,7 @@
         let polylineLayer = L.layerGroup();
         let allOutlets = [];
         let unsubscribe = null;
-        let selectedRoutes = new Set(); // Stores multiple selected routes
+        let selectedRoutes = new Set(); 
 
         const infoCard = document.getElementById('info-card');
         const cardTitle = document.getElementById('card-title');
@@ -379,6 +396,14 @@
         };
 
         const initFirebase = async () => {
+            // Check for valid config
+            if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
+                cardTitle.textContent = "Setup Required";
+                cardDetail.innerHTML = "<b class='text-red-300'>Missing Configuration.</b><br>Edit index.html and add your Firebase Config keys.";
+                console.error("FIREBASE CONFIG MISSING. Please edit the 'manualFirebaseConfig' object in the script tag.");
+                return;
+            }
+
             try {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -409,7 +434,7 @@
             } catch (error) {
                 console.error("Firebase init failed:", error);
                 cardTitle.textContent = "Connection Error";
-                cardDetail.textContent = "Refresh page.";
+                cardDetail.textContent = "Check console logs.";
             }
         };
 
